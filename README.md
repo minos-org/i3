@@ -6,11 +6,11 @@ i3 includes a debian/ dir which difficults ppa recipes (LP:1390746).  This is an
 
 1. Set up the minos archive:
 
-    $ sudo add-apt-repository ppa:minos-archive/main
+   
 
 2. Install:
 
-    $ sudo apt-get update && sudo apt-get install i3-wm
+   
 
 3. Enjoy =)!
 
