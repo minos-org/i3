@@ -1,0 +1,532 @@
+#undef I3__FILE__
+#define I3__FILE__ "manage.c"
+/*
+ * vim:ts=4:sw=4:expandtab
+ *
+ * i3 - an improved dynamic tiling window manager
+ * © 2009-2013 Michael Stapelberg and contributors (see also: LICENSE)
+ *
+ * manage.c: Initially managing new windows (or existing ones on restart).
+ *
+ */
+#include "all.h"
+#include "yajl_utils.h"
+
+#include <yajl/yajl_gen.h>
+
+/*
+ * Go through all existing windows (if the window manager is restarted) and manage them
+ *
+ */
+void manage_existing_windows(xcb_window_t root) {
+    xcb_query_tree_reply_t *reply;
+    int i, len;
+    xcb_window_t *children;
+    xcb_get_window_attributes_cookie_t *cookies;
+
+    /* Get the tree of windows whose parent is the root window (= all) */
+    if ((reply = xcb_query_tree_reply(conn, xcb_query_tree(conn, root), 0)) == NULL)
+        return;
+
+    len = xcb_query_tree_children_length(reply);
+    cookies = smalloc(len * sizeof(*cookies));
+
+    /* Request the window attributes for every window */
+    children = xcb_query_tree_children(reply);
+    for (i = 0; i < len; ++i)
+        cookies[i] = xcb_get_window_attributes(conn, children[i]);
+
+    /* Call manage_window with the attributes for every window */
+    for (i = 0; i < len; ++i)
+        manage_window(children[i], cookies[i], true);
+
+    free(reply);
+    free(cookies);
+}
+
+/*
+ * Restores the geometry of each window by reparenting it to the root window
+ * at the position of its frame.
+ *
+ * This is to be called *only* before exiting/restarting i3 because of evil
+ * side-effects which are to be expected when continuing to run i3.
+ *
+ */
+void restore_geometry(void) {
+    DLOG("Restoring geometry\n");
+
+    Con *con;
+    TAILQ_FOREACH (con, &all_cons, all_cons)
+        if (con->window) {
+            DLOG("Re-adding X11 border of %d px\n", con->border_width);
+            con->window_rect.width += (2 * con->border_width);
+            con->window_rect.height += (2 * con->border_width);
+            xcb_set_window_rect(conn, con->window->id, con->window_rect);
+            DLOG("placing window %08x at %d %d\n", con->window->id, con->rect.x, con->rect.y);
+            xcb_reparent_window(conn, con->window->id, root,
+                                con->rect.x, con->rect.y);
+        }
+
+    /* Strictly speaking, this line doesn’t really belong here, but since we
+     * are syncing, let’s un-register as a window manager first */
+    xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]) {XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT});
+
+    /* Make sure our changes reach the X server, we restart/exit now */
+    xcb_aux_sync(conn);
+}
+
+/*
+ * Do some sanity checks and then reparent the window.
+ *
+ */
+void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cookie,
+                   bool needs_to_be_mapped) {
+    xcb_drawable_t d = {window};
+    xcb_get_geometry_cookie_t geomc;
+    xcb_get_geometry_reply_t *geom;
+    xcb_get_window_attributes_reply_t *attr = NULL;
+
+    xcb_get_property_cookie_t wm_type_cookie, strut_cookie, state_cookie,
+        utf8_title_cookie, title_cookie,
+        class_cookie, leader_cookie, transient_cookie,
+        role_cookie, startup_id_cookie, wm_hints_cookie,
+        wm_normal_hints_cookie, motif_wm_hints_cookie;
+
+    geomc = xcb_get_geometry(conn, d);
+
+    /* Check if the window is mapped (it could be not mapped when intializing and
+       calling manage_window() for every window) */
+    if ((attr = xcb_get_window_attributes_reply(conn, cookie, 0)) == NULL) {
+        DLOG("Could not get attributes\n");
+        xcb_discard_reply(conn, geomc.sequence);
+        return;
+    }
+
+    if (needs_to_be_mapped && attr->map_state != XCB_MAP_STATE_VIEWABLE) {
+        xcb_discard_reply(conn, geomc.sequence);
+        goto out;
+    }
+
+    /* Don’t manage clients with the override_redirect flag */
+    if (attr->override_redirect) {
+        xcb_discard_reply(conn, geomc.sequence);
+        goto out;
+    }
+
+    /* Check if the window is already managed */
+    if (con_by_window_id(window) != NULL) {
+        DLOG("already managed (by con %p)\n", con_by_window_id(window));
+        xcb_discard_reply(conn, geomc.sequence);
+        goto out;
+    }
+
+    /* Get the initial geometry (position, size, …) */
+    if ((geom = xcb_get_geometry_reply(conn, geomc, 0)) == NULL) {
+        DLOG("could not get geometry\n");
+        goto out;
+    }
+
+    uint32_t values[1];
+
+    /* Set a temporary event mask for the new window, consisting only of
+     * PropertyChange and StructureNotify. We need to be notified of
+     * PropertyChanges because the client can change its properties *after* we
+     * requested them but *before* we actually reparented it and have set our
+     * final event mask.
+     * We need StructureNotify because the client may unmap the window before
+     * we get to re-parent it.
+     * If this request fails, we assume the client has already unmapped the
+     * window between the MapRequest and our event mask change. */
+    values[0] = XCB_EVENT_MASK_PROPERTY_CHANGE |
+                XCB_EVENT_MASK_STRUCTURE_NOTIFY;
+    xcb_void_cookie_t event_mask_cookie =
+        xcb_change_window_attributes_checked(conn, window, XCB_CW_EVENT_MASK, values);
+    if (xcb_request_check(conn, event_mask_cookie) != NULL) {
+        LOG("Could not change event mask, the window probably already disappeared.\n");
+        goto out;
+    }
+
+#define GET_PROPERTY(atom, len) xcb_get_property(conn, false, window, atom, XCB_GET_PROPERTY_TYPE_ANY, 0, len)
+
+    wm_type_cookie = GET_PROPERTY(A__NET_WM_WINDOW_TYPE, UINT32_MAX);
+    strut_cookie = GET_PROPERTY(A__NET_WM_STRUT_PARTIAL, UINT32_MAX);
+    state_cookie = GET_PROPERTY(A__NET_WM_STATE, UINT32_MAX);
+    utf8_title_cookie = GET_PROPERTY(A__NET_WM_NAME, 128);
+    leader_cookie = GET_PROPERTY(A_WM_CLIENT_LEADER, UINT32_MAX);
+    transient_cookie = GET_PROPERTY(XCB_ATOM_WM_TRANSIENT_FOR, UINT32_MAX);
+    title_cookie = GET_PROPERTY(XCB_ATOM_WM_NAME, 128);
+    class_cookie = GET_PROPERTY(XCB_ATOM_WM_CLASS, 128);
+    role_cookie = GET_PROPERTY(A_WM_WINDOW_ROLE, 128);
+    startup_id_cookie = GET_PROPERTY(A__NET_STARTUP_ID, 512);
+    wm_hints_cookie = xcb_icccm_get_wm_hints(conn, window);
+    wm_normal_hints_cookie = xcb_icccm_get_wm_normal_hints(conn, window);
+    motif_wm_hints_cookie = GET_PROPERTY(A__MOTIF_WM_HINTS, 5 * sizeof(uint64_t));
+
+    DLOG("Managing window 0x%08x\n", window);
+
+    i3Window *cwindow = scalloc(sizeof(i3Window));
+    cwindow->id = window;
+    cwindow->depth = get_visual_depth(attr->visual);
+
+    /* We need to grab the mouse buttons for click to focus */
+    xcb_grab_button(conn, false, window, XCB_EVENT_MASK_BUTTON_PRESS,
+                    XCB_GRAB_MODE_SYNC, XCB_GRAB_MODE_ASYNC, root, XCB_NONE,
+                    1 /* left mouse button */,
+                    XCB_BUTTON_MASK_ANY /* don’t filter for any modifiers */);
+
+    xcb_grab_button(conn, false, window, XCB_EVENT_MASK_BUTTON_PRESS,
+                    XCB_GRAB_MODE_SYNC, XCB_GRAB_MODE_ASYNC, root, XCB_NONE,
+                    2 /* middle mouse button */,
+                    XCB_BUTTON_MASK_ANY /* don’t filter for any modifiers */);
+
+    xcb_grab_button(conn, false, window, XCB_EVENT_MASK_BUTTON_PRESS,
+                    XCB_GRAB_MODE_SYNC, XCB_GRAB_MODE_ASYNC, root, XCB_NONE,
+                    3 /* right mouse button */,
+                    XCB_BUTTON_MASK_ANY /* don’t filter for any modifiers */);
+
+    /* update as much information as possible so far (some replies may be NULL) */
+    window_update_class(cwindow, xcb_get_property_reply(conn, class_cookie, NULL), true);
+    window_update_name_legacy(cwindow, xcb_get_property_reply(conn, title_cookie, NULL), true);
+    window_update_name(cwindow, xcb_get_property_reply(conn, utf8_title_cookie, NULL), true);
+    window_update_leader(cwindow, xcb_get_property_reply(conn, leader_cookie, NULL));
+    window_update_transient_for(cwindow, xcb_get_property_reply(conn, transient_cookie, NULL));
+    window_update_strut_partial(cwindow, xcb_get_property_reply(conn, strut_cookie, NULL));
+    window_update_role(cwindow, xcb_get_property_reply(conn, role_cookie, NULL), true);
+    bool urgency_hint;
+    window_update_hints(cwindow, xcb_get_property_reply(conn, wm_hints_cookie, NULL), &urgency_hint);
+    border_style_t motif_border_style = BS_NORMAL;
+    window_update_motif_hints(cwindow, xcb_get_property_reply(conn, motif_wm_hints_cookie, NULL), &motif_border_style);
+    xcb_size_hints_t wm_size_hints;
+    if (!xcb_icccm_get_wm_size_hints_reply(conn, wm_normal_hints_cookie, &wm_size_hints, NULL))
+        memset(&wm_size_hints, '\0', sizeof(xcb_size_hints_t));
+    xcb_get_property_reply_t *type_reply = xcb_get_property_reply(conn, wm_type_cookie, NULL);
+    xcb_get_property_reply_t *state_reply = xcb_get_property_reply(conn, state_cookie, NULL);
+
+    xcb_get_property_reply_t *startup_id_reply;
+    startup_id_reply = xcb_get_property_reply(conn, startup_id_cookie, NULL);
+    char *startup_ws = startup_workspace_for_window(cwindow, startup_id_reply);
+    DLOG("startup workspace = %s\n", startup_ws);
+
+    /* check if the window needs WM_TAKE_FOCUS */
+    cwindow->needs_take_focus = window_supports_protocol(cwindow->id, A_WM_TAKE_FOCUS);
+
+    /* Where to start searching for a container that swallows the new one? */
+    Con *search_at = croot;
+
+    if (xcb_reply_contains_atom(type_reply, A__NET_WM_WINDOW_TYPE_DOCK)) {
+        LOG("This window is of type dock\n");
+        Output *output = get_output_containing(geom->x, geom->y);
+        if (output != NULL) {
+            DLOG("Starting search at output %s\n", output->name);
+            search_at = output->con;
+        }
+
+        /* find out the desired position of this dock window */
+        if (cwindow->reserved.top > 0 && cwindow->reserved.bottom == 0) {
+            DLOG("Top dock client\n");
+            cwindow->dock = W_DOCK_TOP;
+        } else if (cwindow->reserved.top == 0 && cwindow->reserved.bottom > 0) {
+            DLOG("Bottom dock client\n");
+            cwindow->dock = W_DOCK_BOTTOM;
+        } else {
+            DLOG("Ignoring invalid reserved edges (_NET_WM_STRUT_PARTIAL), using position as fallback:\n");
+            if (geom->y < (int16_t)(search_at->rect.height / 2)) {
+                DLOG("geom->y = %d < rect.height / 2 = %d, it is a top dock client\n",
+                     geom->y, (search_at->rect.height / 2));
+                cwindow->dock = W_DOCK_TOP;
+            } else {
+                DLOG("geom->y = %d >= rect.height / 2 = %d, it is a bottom dock client\n",
+                     geom->y, (search_at->rect.height / 2));
+                cwindow->dock = W_DOCK_BOTTOM;
+            }
+        }
+    }
+
+    DLOG("Initial geometry: (%d, %d, %d, %d)\n", geom->x, geom->y, geom->width, geom->height);
+
+    Con *nc = NULL;
+    Match *match = NULL;
+    Assignment *assignment;
+
+    /* TODO: two matches for one container */
+
+    /* See if any container swallows this new window */
+    nc = con_for_window(search_at, cwindow, &match);
+    if (nc == NULL) {
+        /* If not, check if it is assigned to a specific workspace / output */
+        if ((assignment = assignment_for(cwindow, A_TO_WORKSPACE | A_TO_OUTPUT))) {
+            DLOG("Assignment matches (%p)\n", match);
+            if (assignment->type == A_TO_WORKSPACE) {
+                Con *assigned_ws = workspace_get(assignment->dest.workspace, NULL);
+                nc = con_descend_tiling_focused(assigned_ws);
+                DLOG("focused on ws %s: %p / %s\n", assigned_ws->name, nc, nc->name);
+                if (nc->type == CT_WORKSPACE)
+                    nc = tree_open_con(nc, cwindow);
+                else
+                    nc = tree_open_con(nc->parent, cwindow);
+
+                /* set the urgency hint on the window if the workspace is not visible */
+                if (!workspace_is_visible(assigned_ws))
+                    urgency_hint = true;
+            }
+            /* TODO: handle assignments with type == A_TO_OUTPUT */
+        } else if (startup_ws) {
+            /* If it’s not assigned, but was started on a specific workspace,
+             * we want to open it there */
+            DLOG("Using workspace on which this application was started (%s)\n", startup_ws);
+            nc = con_descend_tiling_focused(workspace_get(startup_ws, NULL));
+            DLOG("focused on ws %s: %p / %s\n", startup_ws, nc, nc->name);
+            if (nc->type == CT_WORKSPACE)
+                nc = tree_open_con(nc, cwindow);
+            else
+                nc = tree_open_con(nc->parent, cwindow);
+        } else {
+            /* If not, insert it at the currently focused position */
+            if (focused->type == CT_CON && con_accepts_window(focused)) {
+                LOG("using current container, focused = %p, focused->name = %s\n",
+                    focused, focused->name);
+                nc = focused;
+            } else
+                nc = tree_open_con(NULL, cwindow);
+        }
+    } else {
+        /* M_BELOW inserts the new window as a child of the one which was
+         * matched (e.g. dock areas) */
+        if (match != NULL && match->insert_where == M_BELOW) {
+            nc = tree_open_con(nc, cwindow);
+        }
+
+        /* If M_BELOW is not used, the container is replaced. This happens with
+         * "swallows" criteria that are used for stored layouts, in which case
+         * we need to remove that criterion, because they should only be valid
+         * once. */
+        if (match != NULL && match->insert_where != M_BELOW) {
+            DLOG("Removing match %p from container %p\n", match, nc);
+            TAILQ_REMOVE(&(nc->swallow_head), match, matches);
+        }
+    }
+
+    DLOG("new container = %p\n", nc);
+    if (nc->window != NULL && nc->window != cwindow) {
+        if (!restore_kill_placeholder(nc->window->id)) {
+            DLOG("Uh?! Container without a placeholder, but with a window, has swallowed this to-be-managed window?!\n");
+        }
+    }
+    nc->window = cwindow;
+    x_reinit(nc);
+
+    nc->border_width = geom->border_width;
+
+    char *name;
+    sasprintf(&name, "[i3 con] container around %p", cwindow);
+    x_set_name(nc, name);
+    free(name);
+
+    /* handle fullscreen containers */
+    Con *ws = con_get_workspace(nc);
+    Con *fs = (ws ? con_get_fullscreen_con(ws, CF_OUTPUT) : NULL);
+    if (fs == NULL)
+        fs = con_get_fullscreen_con(croot, CF_GLOBAL);
+
+    if (xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_FULLSCREEN)) {
+        /* If this window is already fullscreen (after restarting!), skip
+         * toggling fullscreen, that would drop it out of fullscreen mode. */
+        if (fs != nc)
+            con_toggle_fullscreen(nc, CF_OUTPUT);
+        fs = NULL;
+    }
+
+    bool set_focus = false;
+
+    if (fs == NULL) {
+        DLOG("Not in fullscreen mode, focusing\n");
+        if (!cwindow->dock) {
+            /* Check that the workspace is visible and on the same output as
+             * the current focused container. If the window was assigned to an
+             * invisible workspace, we should not steal focus. */
+            Con *current_output = con_get_output(focused);
+            Con *target_output = con_get_output(ws);
+
+            if (workspace_is_visible(ws) && current_output == target_output) {
+                if (!match || !match->restart_mode) {
+                    set_focus = true;
+                } else
+                    DLOG("not focusing, matched with restart_mode == true\n");
+            } else
+                DLOG("workspace not visible, not focusing\n");
+        } else
+            DLOG("dock, not focusing\n");
+    } else {
+        DLOG("fs = %p, ws = %p, not focusing\n", fs, ws);
+        /* Insert the new container in focus stack *after* the currently
+         * focused (fullscreen) con. This way, the new container will be
+         * focused after we return from fullscreen mode */
+        Con *first = TAILQ_FIRST(&(nc->parent->focus_head));
+        if (first != nc) {
+            /* We only modify the focus stack if the container is not already
+             * the first one. This can happen when existing containers swallow
+             * new windows, for example when restarting. */
+            TAILQ_REMOVE(&(nc->parent->focus_head), nc, focused);
+            TAILQ_INSERT_AFTER(&(nc->parent->focus_head), first, nc, focused);
+        }
+    }
+
+    /* set floating if necessary */
+    bool want_floating = false;
+    if (xcb_reply_contains_atom(type_reply, A__NET_WM_WINDOW_TYPE_DIALOG) ||
+        xcb_reply_contains_atom(type_reply, A__NET_WM_WINDOW_TYPE_UTILITY) ||
+        xcb_reply_contains_atom(type_reply, A__NET_WM_WINDOW_TYPE_TOOLBAR) ||
+        xcb_reply_contains_atom(type_reply, A__NET_WM_WINDOW_TYPE_SPLASH) ||
+        xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_MODAL) ||
+        (wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MAX_SIZE &&
+         wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE &&
+         wm_size_hints.min_height == wm_size_hints.max_height &&
+         wm_size_hints.min_width == wm_size_hints.max_width)) {
+        LOG("This window is a dialog window, setting floating\n");
+        want_floating = true;
+    }
+
+    FREE(state_reply);
+    FREE(type_reply);
+
+    if (cwindow->transient_for != XCB_NONE ||
+        (cwindow->leader != XCB_NONE &&
+         cwindow->leader != cwindow->id &&
+         con_by_window_id(cwindow->leader) != NULL)) {
+        LOG("This window is transient for another window, setting floating\n");
+        want_floating = true;
+
+        if (config.popup_during_fullscreen == PDF_LEAVE_FULLSCREEN &&
+            fs != NULL) {
+            LOG("There is a fullscreen window, leaving fullscreen mode\n");
+            con_toggle_fullscreen(fs, CF_OUTPUT);
+        } else if (config.popup_during_fullscreen == PDF_SMART &&
+                   fs != NULL &&
+                   fs->window != NULL) {
+            i3Window *transient_win = cwindow;
+            while (transient_win != NULL &&
+                   transient_win->transient_for != XCB_NONE) {
+                if (transient_win->transient_for == fs->window->id) {
+                    LOG("This floating window belongs to the fullscreen window (popup_during_fullscreen == smart)\n");
+                    set_focus = true;
+                    break;
+                }
+                Con *next_transient = con_by_window_id(transient_win->transient_for);
+                if (next_transient == NULL)
+                    break;
+                /* Some clients (e.g. x11-ssh-askpass) actually set
+                 * WM_TRANSIENT_FOR to their own window id, so break instead of
+                 * looping endlessly. */
+                if (transient_win == next_transient->window)
+                    break;
+                transient_win = next_transient->window;
+            }
+        }
+    }
+
+    /* dock clients cannot be floating, that makes no sense */
+    if (cwindow->dock)
+        want_floating = false;
+
+    /* Store the requested geometry. The width/height gets raised to at least
+     * 75x50 when entering floating mode, which is the minimum size for a
+     * window to be useful (smaller windows are usually overlays/toolbars/…
+     * which are not managed by the wm anyways). We store the original geometry
+     * here because it’s used for dock clients. */
+    if (nc->geometry.width == 0)
+        nc->geometry = (Rect) {geom->x, geom->y, geom->width, geom->height};
+
+    if (want_floating) {
+        DLOG("geometry = %d x %d\n", nc->geometry.width, nc->geometry.height);
+        floating_enable(nc, true);
+    }
+
+    if (motif_border_style != BS_NORMAL) {
+        DLOG("MOTIF_WM_HINTS specifies decorations (border_style = %d)\n", motif_border_style);
+        if (want_floating) {
+            con_set_border_style(nc, motif_border_style, config.default_floating_border_width);
+        } else {
+            con_set_border_style(nc, motif_border_style, config.default_border_width);
+        }
+    }
+
+    if (nc->border_style == BS_PIXEL) {
+        /* if the border style is BS_PIXEL, explicitly set the border width of
+         * the new container */
+        nc->current_border_width = (want_floating ? config.default_floating_border_width : config.default_border_width);
+    }
+
+    /* to avoid getting an UnmapNotify event due to reparenting, we temporarily
+     * declare no interest in any state change event of this window */
+    values[0] = XCB_NONE;
+    xcb_change_window_attributes(conn, window, XCB_CW_EVENT_MASK, values);
+
+    xcb_void_cookie_t rcookie = xcb_reparent_window_checked(conn, window, nc->frame, 0, 0);
+    if (xcb_request_check(conn, rcookie) != NULL) {
+        LOG("Could not reparent the window, aborting\n");
+        goto geom_out;
+    }
+
+    values[0] = CHILD_EVENT_MASK & ~XCB_EVENT_MASK_ENTER_WINDOW;
+    xcb_change_window_attributes(conn, window, XCB_CW_EVENT_MASK, values);
+    xcb_flush(conn);
+
+    /* Put the client inside the save set. Upon termination (whether killed or
+     * normal exit does not matter) of the window manager, these clients will
+     * be correctly reparented to their most closest living ancestor (=
+     * cleanup) */
+    xcb_change_save_set(conn, XCB_SET_MODE_INSERT, window);
+
+    /* Check if any assignments match */
+    run_assignments(cwindow);
+
+    /* 'ws' may be invalid because of the assignments, e.g. when the user uses
+     * "move window to workspace 1", but had it assigned to workspace 2. */
+    ws = con_get_workspace(nc);
+
+    /* If this window was put onto an invisible workspace (via assignments), we
+     * render this workspace. It wouldn’t be rendered in our normal code path
+     * because only the visible workspaces get rendered.
+     *
+     * By rendering the workspace, we assign proper coordinates (read: not
+     * width=0, height=0) to the window, which is important for windows who
+     * actually use them to position their GUI elements, e.g. rhythmbox. */
+    if (ws && !workspace_is_visible(ws)) {
+        /* This is a bit hackish: we need to copy the content container’s rect
+         * to the workspace, because calling render_con() on the content
+         * container would also take the shortcut and not render the invisible
+         * workspace at all. However, just calling render_con() on the
+         * workspace isn’t enough either — it needs the rect. */
+        ws->rect = ws->parent->rect;
+        render_con(ws, true);
+        /* Disable setting focus, otherwise we’d move focus to an invisible
+         * workspace, which we generally prevent (e.g. in
+         * con_move_to_workspace). */
+        set_focus = false;
+    }
+    render_con(croot, false);
+
+    /* Send an event about window creation */
+    ipc_send_window_event("new", nc);
+
+    /* Defer setting focus after the 'new' event has been sent to ensure the
+     * proper window event sequence. */
+    if (set_focus && nc->mapped) {
+        DLOG("Now setting focus.\n");
+        con_focus(nc);
+    }
+
+    tree_render();
+
+    /* Windows might get managed with the urgency hint already set (Pidgin is
+     * known to do that), so check for that and handle the hint accordingly.
+     * This code needs to be in this part of manage_window() because the window
+     * needs to be on the final workspace first. */
+    con_set_urgency(nc, urgency_hint);
+
+geom_out:
+    free(geom);
+out:
+    free(attr);
+    return;
+}
