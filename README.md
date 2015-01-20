@@ -20,4 +20,4 @@ i3 includes a debian/ dir which difficults ppa recipes (LP:1390746).  This is an
 
 ## Feedback
 
-Please drop me an [email](mailto:m@javier.io) with your suggestions or open [an issue](https://github.com/minos-org/i3-deb/issues) with your comments.
+Please drop me an [email](mailto:j@minos.io) with your suggestions or open [an issue](https://github.com/minos-org/i3-deb/issues) with your comments.
