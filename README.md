@@ -4,8 +4,6 @@ i3 includes a debian/ dir which difficults ppa recipes (LP:1390746).  This is an
 
 ## Quick start
 
-### On Ubuntu (only LTS releases)
-
 1. Set up the minos archive:
 
    ```
