@@ -1,6 +1,6 @@
 ## About
 
-i3 includes a debian/ dir which difficults ppa recipes (LP:1390746).  This is an automatic generated mirror of i3 minus deb/. It's used as base to build the i3 version shipped with minos. See https://github.com/minos-org/i3-deb/tree/master/debian/patches to understand the patches applied on top to generate the final packages.
+i3 includes a debian/ dir which difficults ppa recipes (LP:1390746). This is an automatic generated mirror of i3 minus deb/. It's used as base to build the i3 version shipped with minos. See https://github.com/minos-org/i3-deb/tree/master/debian/patches to understand the patches applied on top to generate the final packages.
 
 ## Quick start
 
