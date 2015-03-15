@@ -14,10 +14,3 @@
  *
  */
 Con *output_get_content(Con *output);
-
-/**
- * Returns an 'output' corresponding to one of left/right/down/up or a specific
- * output name.
- *
- */
-Output *get_output_from_string(Output *current_output, const char *output_str);

@@ -54,38 +54,23 @@ typedef struct parser_ctx {
 
 parser_ctx parser_context;
 
+/* The buffer statusline points to */
 struct statusline_head statusline_head = TAILQ_HEAD_INITIALIZER(statusline_head);
-/* Used temporarily while reading a statusline */
-struct statusline_head statusline_buffer = TAILQ_HEAD_INITIALIZER(statusline_buffer);
+char *statusline_buffer = NULL;
 
 int child_stdin;
 
 /*
- * Remove all blocks from the given statusline.
- * If free_resources is set, the fields of each status block will be free'd.
+ * Clears all blocks from the statusline structure in memory and frees their
+ * associated resources.
  */
-static void clear_statusline(struct statusline_head *head, bool free_resources) {
+static void clear_status_blocks() {
     struct status_block *first;
-    while (!TAILQ_EMPTY(head)) {
-        first = TAILQ_FIRST(head);
-        if (free_resources) {
-            I3STRING_FREE(first->full_text);
-            FREE(first->color);
-            FREE(first->name);
-            FREE(first->instance);
-        }
-
-        TAILQ_REMOVE(head, first, blocks);
+    while (!TAILQ_EMPTY(&statusline_head)) {
+        first = TAILQ_FIRST(&statusline_head);
+        I3STRING_FREE(first->full_text);
+        TAILQ_REMOVE(&statusline_head, first, blocks);
         free(first);
-    }
-}
-
-static void copy_statusline(struct statusline_head *from, struct statusline_head *to) {
-    struct status_block *current;
-    TAILQ_FOREACH(current, from, blocks) {
-        struct status_block *new_block = smalloc(sizeof(struct status_block));
-        memcpy(new_block, current, sizeof(struct status_block));
-        TAILQ_INSERT_TAIL(to, new_block, blocks);
     }
 }
 
@@ -96,7 +81,7 @@ static void copy_statusline(struct statusline_head *from, struct statusline_head
  * the space allocated for the statusline.
  */
 __attribute__((format(printf, 1, 2))) static void set_statusline_error(const char *format, ...) {
-    clear_statusline(&statusline_head, true);
+    clear_status_blocks();
 
     char *message;
     va_list args;
@@ -130,6 +115,9 @@ void cleanup(void) {
     if (stdin_io != NULL) {
         ev_io_stop(main_loop, stdin_io);
         FREE(stdin_io);
+        FREE(statusline_buffer);
+        /* statusline pointed to memory within statusline_buffer */
+        statusline = NULL;
     }
 
     if (child_sig != NULL) {
@@ -142,12 +130,20 @@ void cleanup(void) {
 
 /*
  * The start of a new array is the start of a new status line, so we clear all
- * previous entries from the buffer.
+ * previous entries.
+ *
  */
 static int stdin_start_array(void *context) {
-    // the blocks are still used by statusline_head, so we won't free the
-    // resources here.
-    clear_statusline(&statusline_buffer, false);
+    struct status_block *first;
+    while (!TAILQ_EMPTY(&statusline_head)) {
+        first = TAILQ_FIRST(&statusline_head);
+        I3STRING_FREE(first->full_text);
+        FREE(first->color);
+        FREE(first->name);
+        FREE(first->instance);
+        TAILQ_REMOVE(&statusline_head, first, blocks);
+        free(first);
+    }
     return 1;
 }
 
@@ -230,10 +226,6 @@ static int stdin_integer(void *context, long long val) {
     return 1;
 }
 
-/*
- * When a map is finished, we have an entire status block.
- * Move it from the parser's context to the statusline buffer.
- */
 static int stdin_end_map(void *context) {
     parser_ctx *ctx = context;
     struct status_block *new_block = smalloc(sizeof(struct status_block));
@@ -244,19 +236,11 @@ static int stdin_end_map(void *context) {
         new_block->full_text = i3string_from_utf8("SPEC VIOLATION: full_text is NULL!");
     if (new_block->urgent)
         ctx->has_urgent = true;
-    TAILQ_INSERT_TAIL(&statusline_buffer, new_block, blocks);
+    TAILQ_INSERT_TAIL(&statusline_head, new_block, blocks);
     return 1;
 }
 
-/*
- * When an array is finished, we have an entire statusline.
- * Copy it from the buffer to the actual statusline.
- */
 static int stdin_end_array(void *context) {
-    DLOG("copying statusline_buffer to statusline_head\n");
-    clear_statusline(&statusline_head, true);
-    copy_statusline(&statusline_buffer, &statusline_head);
-
     DLOG("dumping statusline:\n");
     struct status_block *current;
     TAILQ_FOREACH(current, &statusline_head, blocks) {

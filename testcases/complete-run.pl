@@ -227,7 +227,7 @@ if ($numtests == 1) {
 
 END { cleanup() }
 
-exit ($aggregator->failed > 0);
+exit 0;
 
 #
 # Takes a test from the beginning of @testfiles and runs it.
@@ -324,9 +324,8 @@ sub take_job {
 }
 
 sub cleanup {
-    my $exitcode = $?;
     $_->() for our @CLEANUP;
-    exit $exitcode;
+    exit;
 }
 
 # must be in a begin block because we C<exit 0> above

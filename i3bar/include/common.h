@@ -16,6 +16,8 @@
 typedef struct rect_t rect;
 
 struct ev_loop *main_loop;
+char *statusline;
+char *statusline_buffer;
 
 struct rect_t {
     int x;
