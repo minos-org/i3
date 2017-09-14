@@ -75,7 +75,7 @@ used to install the testsuite. Many users prefer to use the more modern
 +cpanminus+ instead, though (because it asks no questions and just works):
 
 The tests additionally require +Xephyr(1)+ to run a nested X server. Install
-+xserver-xephyr+ on Debian or +xorg-xserver-xephyr+ on Arch Linux.
++xserver-xephyr+ on Debian or +xorg-server-xephyr+ on Arch Linux.
 
 .Installing testsuite dependencies using cpanminus (preferred)
 --------------------------------------------------------------------------------
@@ -83,6 +83,7 @@ $ cd ~/i3/testcases
 $ sudo apt-get install cpanminus
 $ sudo cpanm .
 $ cd ~/i3/AnyEvent-I3
+$ sudo cpanm Module::Install
 $ sudo cpanm .
 --------------------------------------------------------------------------------
 
@@ -93,6 +94,7 @@ If you don’t want to use cpanminus for some reason, the same works with cpan:
 $ cd ~/i3/testcases
 $ sudo cpan .
 $ cd ~/i3/AnyEvent-I3
+$ sudo cpan Module::Install
 $ sudo cpan .
 --------------------------------------------------------------------------------
 
