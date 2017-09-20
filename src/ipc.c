@@ -113,7 +113,7 @@ void ipc_shutdown(shutdown_reason_t reason) {
  * or not (at the moment, always returns true).
  *
  */
-IPC_HANDLER(command) {
+IPC_HANDLER(run_command) {
     /* To get a properly terminated buffer, we copy
      * message_size bytes out of the buffer */
     char *command = scalloc(message_size + 1, 1);
@@ -580,6 +580,10 @@ static void dump_bar_bindings(yajl_gen gen, Barconfig *config) {
 }
 
 static char *canonicalize_output_name(char *name) {
+    /* Do not canonicalize special output names. */
+    if (strcasecmp(name, "primary") == 0) {
+        return name;
+    }
     Output *output = get_output_by_name(name, false);
     return output ? output_primary_name(output) : name;
 }
@@ -1121,7 +1125,7 @@ IPC_HANDLER(get_config) {
 /* The index of each callback function corresponds to the numeric
  * value of the message type (see include/i3/ipc.h) */
 handler_t handlers[10] = {
-    handle_command,
+    handle_run_command,
     handle_get_workspaces,
     handle_subscribe,
     handle_get_outputs,

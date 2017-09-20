@@ -14,32 +14,24 @@
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
-# Test that the binding event works properly
-# Ticket: #1210
-use i3test i3_autostart => 0;
-
-my $config = <<EOT;
+# Verifies that mouse bindings work on the root window if
+# --whole-window is set.
+# Ticket: #2115
+use i3test i3_config => <<EOT;
 # i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
-bindsym r reload
+workspace_auto_back_and_forth no
+bindsym --whole-window button4 workspace special
 EOT
+use i3test::XTEST;
 
-SKIP: {
-    qx(which xdotool 2> /dev/null);
+fresh_workspace;
 
-    skip 'xdotool is required to test the binding event. `[apt-get install|pacman -S] xdotool`', 1 if $?;
+xtest_button_press(4, 50, 50);
+xtest_button_release(4, 50, 50);
+sync_with_i3;
 
-    my $pid = launch_with_config($config);
+is(focused_ws(), 'special', 'the binding was triggered');
 
-    my $i3 = i3(get_socket_path());
-    $i3->connect->recv;
-
-    qx(xdotool key r);
-
-    does_i3_live;
-
-    exit_gracefully($pid);
-
-}
 done_testing;

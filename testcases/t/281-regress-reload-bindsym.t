@@ -14,29 +14,23 @@
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
-# Regression test for focus handling when using floating enable/disable with
-# criteria for windows on non-visible workspaces.
-# Ticket: #1027
-# Bug still in: 4.5.1-90-g6582da9
+# Test that the binding event works properly
+# Ticket: #1210
 use i3test i3_config => <<EOT;
 # i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
-assign [class="^special$"] → mail
-for_window [class="^special$"] floating enable, floating disable
+bindsym r reload
 EOT
 
-my $window = open_window(
-    name => 'Borderless window',
-    wm_class => 'special',
-    dont_map => 1,
-);
-$window->map;
+SKIP: {
+    qx(which xdotool 2> /dev/null);
 
-sync_with_i3;
+    skip 'xdotool is required to test the binding event. `[apt-get install|pacman -S] xdotool`', 1 if $?;
 
-cmd '[class="^special$"] focus';
+    qx(xdotool key r);
 
-does_i3_live;
+    does_i3_live;
 
+}
 done_testing;

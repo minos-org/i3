@@ -14,29 +14,24 @@
 # • http://onyxneon.com/books/modern_perl/modern_perl_a4.pdf
 #   (unless you are already familiar with Perl)
 #
-# Verifies that mouse bindings work on the root window if
-# --whole-window is set.
-# Ticket: #2115
-use i3test i3_autostart => 0;
-use i3test::XTEST;
-
-my $config = <<EOT;
+# This is a regression test for a bug where a normal floating default border is
+# not applied when the default tiling border is set to a pixel value.
+# Ticket: #1305
+# Bug still in: 4.8-62-g7381b50
+use i3test i3_config => <<EOT;
 # i3 config file (v4)
 font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
 
-workspace_auto_back_and_forth no
-bindsym --whole-window button4 workspace special
+new_window pixel 5
+new_float normal
 EOT
 
-my $pid = launch_with_config($config);
-fresh_workspace;
+my $ws = fresh_workspace;
 
-xtest_button_press(4, 50, 50);
-xtest_button_release(4, 50, 50);
-sync_with_i3;
+my $float_window = open_floating_window;
 
-is(focused_ws(), 'special', 'the binding was triggered');
+my @floating = @{get_ws($ws)->{floating_nodes}};
 
-exit_gracefully($pid);
+is($floating[0]->{nodes}[0]->{border}, 'normal', 'default floating border is `normal`');
 
 done_testing;
