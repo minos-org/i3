@@ -263,7 +263,7 @@ single workspace on which you open three terminal windows. All these terminal
 windows are directly attached to one node inside i3’s layout tree, the
 workspace node. By default, the workspace node’s orientation is +horizontal+.
 
-Now you move one of these terminals down (+$mod+Shift+k+ by default). The
+Now you move one of these terminals down (+$mod+Shift+j+ by default). The
 workspace node’s orientation will be changed to +vertical+. The terminal window
 you moved down is directly attached to the workspace and appears on the bottom
 of the screen. A new (horizontal) container was created to accommodate the
@@ -1201,7 +1201,7 @@ force_display_urgency_hint 500 ms
 === Focus on window activation
 
 If a window is activated, e.g., via +google-chrome www.google.com+, it may request
-to take focus. Since this may not preferable, different reactions can be configured.
+to take focus. Since this may not be preferable, different reactions can be configured.
 
 Note that this may not affect windows that are being opened. To prevent new windows
 from being focused, see <<no_focus>>.
@@ -1350,9 +1350,11 @@ mode). The modifier key can be configured using the +modifier+ option.
 The mode option can be changed during runtime through the +bar mode+ command.
 On reload the mode will be reverted to its configured value.
 
-The hide mode maximizes screen space that can be used for actual windows. Also,
-i3bar sends the +SIGSTOP+ and +SIGCONT+ signals to the statusline process to
-save battery power.
+The hide mode maximizes screen space that can be used for actual windows. When
+the bar is hidden, i3bar sends the +SIGSTOP+ and +SIGCONT+ signals to the
++status_command+ process in order to conserve battery power. This feature can
+be disabled by the +status_command+ process by setting the appropriate values
+in its JSON header message.
 
 Invisible mode allows to permanently maximize screen space, as the bar is never
 shown. Thus, you can configure i3bar to not disturb you by popping up because
@@ -1409,6 +1411,11 @@ button4::
     Scroll wheel up.
 button5::
     Scroll wheel down.
+button6::
+    Scroll wheel right.
+button7::
+    Scroll wheel left.
+    
 
 Please note that the old +wheel_up_cmd+ and +wheel_down_cmd+ commands are deprecated
 and will be removed in a future release. We strongly recommend using the more general
@@ -1676,7 +1683,7 @@ the form "[n][:][NAME]" will display only the number.
 
 The default is to display the full name within the workspace button. Be aware
 that the colon in the workspace name is optional, so `[n][NAME]` will also 
-have the the workspace name and number stripped correctly. 
+have the workspace name and number stripped correctly. 
 
 *Syntax*:
 ------------------------------
@@ -1895,8 +1902,18 @@ con_id::
 	to match only the currently focused window.
 floating::
 	Only matches floating windows. This criterion requires no value.
+floating_from::
+	Like +floating+ but this criterion takes two possible values: "auto"
+	and "user". With "auto", only windows that were automatically opened as
+	floating are matched. With "user", only windows that the user made
+	floating are matched.
 tiling::
 	Only matches tiling windows. This criterion requires no value.
+tiling_from::
+	Like +tiling+ but this criterion takes two possible values: "auto" and
+	"user". With "auto", only windows that were automatically opened as
+	tiling are matched. With "user", only windows that the user made tiling
+	are matched.
 
 The criteria +class+, +instance+, +role+, +title+, +workspace+ and +mark+ are
 actually regular expressions (PCRE). See +pcresyntax(3)+ or +perldoc perlre+ for

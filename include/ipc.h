@@ -12,7 +12,6 @@
 #include <config.h>
 
 #include <ev.h>
-#include <stdbool.h>
 #include <yajl/yajl_gen.h>
 #include <yajl/yajl_parse.h>
 
@@ -145,9 +144,9 @@ void ipc_send_barconfig_update_event(Barconfig *barconfig);
 void ipc_send_binding_event(const char *event_type, Binding *bind);
 
 /**
-  * Set the maximum duration that we allow for a connection with an unwriteable
-  * socket.
-  */
+ * Set the maximum duration that we allow for a connection with an unwriteable
+ * socket.
+ */
 void ipc_set_kill_timeout(ev_tstamp new);
 
 /**

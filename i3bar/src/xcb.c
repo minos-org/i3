@@ -9,36 +9,21 @@
  */
 #include "common.h"
 
-#include <xcb/xcb.h>
-#include <xcb/xkb.h>
-#include <xcb/xproto.h>
+#include <err.h>
+#include <ev.h>
+#include <i3/ipc.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include <xcb/xcb_aux.h>
 #include <xcb/xcb_cursor.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
-#include <i3/ipc.h>
-#include <ev.h>
-#include <errno.h>
-#include <limits.h>
-#include <err.h>
-
-#include <X11/Xlib.h>
-#include <X11/XKBlib.h>
-#include <X11/extensions/XKB.h>
+#include <xcb/xkb.h>
 
 #ifdef I3_ASAN_ENABLED
 #include <sanitizer/lsan_interface.h>
 #endif
 
 #include "libi3.h"
-
-/** This is the equivalent of XC_left_ptr. I’m not sure why xcb doesn’t have a
- * constant for that. */
-#define XCB_CURSOR_LEFT_PTR 68
 
 /* We save the atoms in an easy to access array, indexed by an enum */
 enum {
@@ -161,7 +146,7 @@ static uint32_t get_sep_offset(struct status_block *block) {
 static int get_tray_width(struct tc_head *trayclients) {
     trayclient *trayclient;
     int tray_width = 0;
-    TAILQ_FOREACH_REVERSE(trayclient, trayclients, tc_head, tailq) {
+    TAILQ_FOREACH_REVERSE (trayclient, trayclients, tc_head, tailq) {
         if (!trayclient->mapped)
             continue;
         tray_width += icon_size + logical_px(config.tray_padding);
@@ -203,7 +188,7 @@ static uint32_t predict_statusline_length(bool use_short_text) {
     uint32_t width = 0;
     struct status_block *block;
 
-    TAILQ_FOREACH(block, &statusline_head, blocks) {
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text = block->full_text;
         struct status_block_render_desc *render = &block->full_render;
         if (use_short_text && block->short_text != NULL) {
@@ -266,7 +251,7 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
     uint32_t x = 0 - clip_left;
 
     /* Draw the text of each block */
-    TAILQ_FOREACH(block, &statusline_head, blocks) {
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text = block->full_text;
         struct status_block_render_desc *render = &block->full_render;
         if (use_short_text && block->short_text != NULL) {
@@ -343,7 +328,7 @@ static void hide_bars(void) {
     }
 
     i3_output *walk;
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (!walk->active) {
             continue;
         }
@@ -368,7 +353,7 @@ static void unhide_bars(void) {
 
     cont_child();
 
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (walk->bar.id == XCB_NONE) {
             continue;
         }
@@ -448,7 +433,7 @@ void init_colors(const struct xcb_color_strings_t *new_colors) {
 
 static bool execute_custom_command(xcb_keycode_t input_code, bool event_is_release) {
     binding_t *binding;
-    TAILQ_FOREACH(binding, &(config.bindings), bindings) {
+    TAILQ_FOREACH (binding, &(config.bindings), bindings) {
         if ((binding->input_code != input_code) || (binding->release != event_is_release))
             continue;
 
@@ -466,7 +451,7 @@ static void child_handle_button(xcb_button_press_event_t *event, i3_output *outp
     /* x of the start of the current block relative to the statusline. */
     uint32_t last_block_x = 0;
     struct status_block *block;
-    TAILQ_FOREACH(block, &statusline_head, blocks) {
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text;
         struct status_block_render_desc *render;
         if (output->statusline_short_text && block->short_text != NULL) {
@@ -521,7 +506,7 @@ static void handle_button(xcb_button_press_event_t *event) {
     /* Determine, which bar was clicked */
     i3_output *walk;
     xcb_window_t bar = event->event;
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (walk->bar.id == bar) {
             break;
         }
@@ -541,7 +526,7 @@ static void handle_button(xcb_button_press_event_t *event) {
     int workspace_width = 0;
     i3_ws *cur_ws = NULL, *clicked_ws = NULL, *ws_walk;
 
-    TAILQ_FOREACH(ws_walk, walk->workspaces, tailq) {
+    TAILQ_FOREACH (ws_walk, walk->workspaces, tailq) {
         int w = predict_button_width(ws_walk->name_width);
         if (x >= workspace_width && x <= workspace_width + w)
             clicked_ws = ws_walk;
@@ -614,7 +599,7 @@ static void handle_button(xcb_button_press_event_t *event) {
             /* if no workspace was clicked, focus our currently visible
              * workspace if it is not already focused */
             if (cur_ws == NULL) {
-                TAILQ_FOREACH(cur_ws, walk->workspaces, tailq) {
+                TAILQ_FOREACH (cur_ws, walk->workspaces, tailq) {
                     if (cur_ws->visible && !cur_ws->focused)
                         break;
                 }
@@ -672,7 +657,7 @@ static void handle_visibility_notify(xcb_visibility_notify_event_t *event) {
     int num_visible = 0;
     i3_output *output;
 
-    SLIST_FOREACH(output, outputs, slist) {
+    SLIST_FOREACH (output, outputs, slist) {
         if (!output->active) {
             continue;
         }
@@ -687,19 +672,6 @@ static void handle_visibility_notify(xcb_visibility_notify_event_t *event) {
     } else {
         cont_child();
     }
-}
-
-static int strcasecmp_nullable(const char *a, const char *b) {
-    if (a == b) {
-        return 0;
-    }
-    if (a == NULL) {
-        return -1;
-    }
-    if (b == NULL) {
-        return 1;
-    }
-    return strcasecmp(a, b);
 }
 
 /*
@@ -723,14 +695,14 @@ static int reorder_trayclients_cmp(const void *_a, const void *_b) {
  */
 static void configure_trayclients(void) {
     i3_output *output;
-    SLIST_FOREACH(output, outputs, slist) {
+    SLIST_FOREACH (output, outputs, slist) {
         if (!output->active) {
             continue;
         }
 
         int count = 0;
         trayclient *client;
-        TAILQ_FOREACH(client, output->trayclients, tailq) {
+        TAILQ_FOREACH (client, output->trayclients, tailq) {
             if (client->mapped) {
                 count++;
             }
@@ -738,7 +710,7 @@ static void configure_trayclients(void) {
 
         int idx = 0;
         trayclient **trayclients = smalloc(count * sizeof(trayclient *));
-        TAILQ_FOREACH(client, output->trayclients, tailq) {
+        TAILQ_FOREACH (client, output->trayclients, tailq) {
             if (client->mapped) {
                 trayclients[idx++] = client;
             }
@@ -763,13 +735,13 @@ static void configure_trayclients(void) {
 
 static trayclient *trayclient_and_output_from_window(xcb_window_t win, i3_output **output) {
     i3_output *o_walk;
-    SLIST_FOREACH(o_walk, outputs, slist) {
+    SLIST_FOREACH (o_walk, outputs, slist) {
         if (!o_walk->active) {
             continue;
         }
 
         trayclient *client;
-        TAILQ_FOREACH(client, o_walk->trayclients, tailq) {
+        TAILQ_FOREACH (client, o_walk->trayclients, tailq) {
             if (client->win == win) {
                 if (output) {
                     *output = o_walk;
@@ -1112,12 +1084,12 @@ static void handle_property_notify(xcb_property_notify_event_t *event) {
 static void handle_configuration_change(xcb_window_t window) {
     trayclient *trayclient;
     i3_output *output;
-    SLIST_FOREACH(output, outputs, slist) {
+    SLIST_FOREACH (output, outputs, slist) {
         if (!output->active)
             continue;
 
         int clients = 0;
-        TAILQ_FOREACH_REVERSE(trayclient, output->trayclients, tc_head, tailq) {
+        TAILQ_FOREACH_REVERSE (trayclient, output->trayclients, tc_head, tailq) {
             if (!trayclient->mapped)
                 continue;
             clients++;
@@ -1299,22 +1271,11 @@ char *init_xcb_early(void) {
     }
 
     xcb_cursor_context_t *cursor_ctx;
-    if (xcb_cursor_context_new(conn, root_screen, &cursor_ctx) == 0) {
-        cursor = xcb_cursor_load_cursor(cursor_ctx, "left_ptr");
-        xcb_cursor_context_free(cursor_ctx);
-    } else {
-        cursor = xcb_generate_id(xcb_connection);
-        i3Font cursor_font = load_font("cursor", false);
-        xcb_create_glyph_cursor(
-            xcb_connection,
-            cursor,
-            cursor_font.specific.xcb.id,
-            cursor_font.specific.xcb.id,
-            XCB_CURSOR_LEFT_PTR,
-            XCB_CURSOR_LEFT_PTR + 1,
-            0, 0, 0,
-            65535, 65535, 65535);
+    if (xcb_cursor_context_new(conn, root_screen, &cursor_ctx) < 0) {
+        errx(EXIT_FAILURE, "Cannot allocate xcursor context");
     }
+    cursor = xcb_cursor_load_cursor(cursor_ctx, "left_ptr");
+    xcb_cursor_context_free(cursor_ctx);
 
     /* The various watchers to communicate with xcb */
     xcb_io = smalloc(sizeof(ev_io));
@@ -1648,16 +1609,21 @@ void kick_tray_clients(i3_output *output) {
  *
  */
 void destroy_window(i3_output *output) {
-    if (output == NULL) {
-        return;
-    }
-    if (output->bar.id == XCB_NONE) {
+    if (output == NULL || output->bar.id == XCB_NONE) {
         return;
     }
 
     kick_tray_clients(output);
+
+    draw_util_surface_free(xcb_connection, &(output->bar));
+    draw_util_surface_free(xcb_connection, &(output->buffer));
+    draw_util_surface_free(xcb_connection, &(output->statusline_buffer));
     xcb_destroy_window(xcb_connection, output->bar.id);
+    xcb_free_pixmap(xcb_connection, output->buffer.id);
+    xcb_free_pixmap(xcb_connection, output->statusline_buffer.id);
     output->bar.id = XCB_NONE;
+
+    kick_tray_clients(output);
 }
 
 /* Strut partial tells i3 where to reserve space for i3bar. This is determined
@@ -1727,7 +1693,7 @@ static i3_output *get_tray_output(void) {
     i3_output *output = NULL;
     if (TAILQ_EMPTY(&(config.tray_outputs))) {
         /* No tray_output specified, use first active output. */
-        SLIST_FOREACH(output, outputs, slist) {
+        SLIST_FOREACH (output, outputs, slist) {
             if (output->active) {
                 return output;
             }
@@ -1741,8 +1707,8 @@ static i3_output *get_tray_output(void) {
     /* If one or more tray_output assignments were specified, we ensure that at
      * least one of them is actually an output managed by this instance. */
     tray_output_t *tray_output;
-    TAILQ_FOREACH(tray_output, &(config.tray_outputs), tray_outputs) {
-        SLIST_FOREACH(output, outputs, slist) {
+    TAILQ_FOREACH (tray_output, &(config.tray_outputs), tray_outputs) {
+        SLIST_FOREACH (output, outputs, slist) {
             if (output->active &&
                 (strcasecmp(output->name, tray_output->output) == 0 ||
                  (strcasecmp(tray_output->output, "primary") == 0 && output->primary))) {
@@ -1763,7 +1729,7 @@ void reconfig_windows(bool redraw_bars) {
     uint32_t values[6];
 
     i3_output *walk;
-    SLIST_FOREACH(walk, outputs, slist) {
+    SLIST_FOREACH (walk, outputs, slist) {
         if (!walk->active) {
             /* If an output is not active, we destroy its bar */
             /* FIXME: Maybe we rather want to unmap? */
@@ -1831,6 +1797,8 @@ void reconfig_windows(bool redraw_bars) {
                                                                       bar_height);
 
             /* Set the WM_CLASS and WM_NAME (we don't need UTF-8) atoms */
+            char *class;
+            int len = sasprintf(&class, "%s%ci3bar%c", config.bar_id, 0, 0);
             xcb_void_cookie_t class_cookie;
             class_cookie = xcb_change_property(xcb_connection,
                                                XCB_PROP_MODE_REPLACE,
@@ -1838,8 +1806,8 @@ void reconfig_windows(bool redraw_bars) {
                                                XCB_ATOM_WM_CLASS,
                                                XCB_ATOM_STRING,
                                                8,
-                                               (strlen("i3bar") + 1) * 2,
-                                               "i3bar\0i3bar\0");
+                                               len,
+                                               class);
 
             char *name;
             sasprintf(&name, "i3bar for output %s", walk->name);
@@ -2026,7 +1994,7 @@ void draw_bars(bool unhide) {
     uint32_t short_statusline_width = predict_statusline_length(true);
 
     i3_output *outputs_walk;
-    SLIST_FOREACH(outputs_walk, outputs, slist) {
+    SLIST_FOREACH (outputs_walk, outputs, slist) {
         int workspace_width = 0;
 
         if (!outputs_walk->active) {
@@ -2045,7 +2013,7 @@ void draw_bars(bool unhide) {
 
         if (!config.disable_ws) {
             i3_ws *ws_walk;
-            TAILQ_FOREACH(ws_walk, outputs_walk->workspaces, tailq) {
+            TAILQ_FOREACH (ws_walk, outputs_walk->workspaces, tailq) {
                 DLOG("Drawing button for WS %s at x = %d, len = %d\n",
                      i3string_as_utf8(ws_walk->name), workspace_width, ws_walk->name_width);
                 color_t fg_color = colors.inactive_ws_fg;
@@ -2139,7 +2107,7 @@ void draw_bars(bool unhide) {
  */
 void redraw_bars(void) {
     i3_output *outputs_walk;
-    SLIST_FOREACH(outputs_walk, outputs, slist) {
+    SLIST_FOREACH (outputs_walk, outputs, slist) {
         if (!outputs_walk->active) {
             continue;
         }

@@ -6,12 +6,11 @@
  *
  */
 #include "libi3.h"
-
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-
 #include "queue.h"
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 struct Colorpixel {
     char hex[8];
     uint32_t pixel;
@@ -48,7 +47,7 @@ uint32_t get_colorpixel(const char *hex) {
 
     /* Lookup this colorpixel in the cache */
     struct Colorpixel *colorpixel;
-    SLIST_FOREACH(colorpixel, &(colorpixels), colorpixels) {
+    SLIST_FOREACH (colorpixel, &(colorpixels), colorpixels) {
         if (strcmp(colorpixel->hex, hex) == 0)
             return colorpixel->pixel;
     }

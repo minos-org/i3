@@ -9,10 +9,6 @@
  */
 #include "all.h"
 
-#include "yajl_utils.h"
-
-#include <yajl/yajl_gen.h>
-
 /*
  * Match frame and window depth. This is needed because X will refuse to reparent a
  * window whose background is ParentRelative under a window with a different depth.
@@ -29,7 +25,7 @@ static xcb_window_t _match_depth(i3Window *win, Con *con) {
 }
 
 /*
- * Remove all match criteria, the first swallowed window wins. 
+ * Remove all match criteria, the first swallowed window wins.
  *
  */
 static void _remove_matches(Con *con) {
@@ -83,15 +79,16 @@ void restore_geometry(void) {
     DLOG("Restoring geometry\n");
 
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons)
-    if (con->window) {
-        DLOG("Re-adding X11 border of %d px\n", con->border_width);
-        con->window_rect.width += (2 * con->border_width);
-        con->window_rect.height += (2 * con->border_width);
-        xcb_set_window_rect(conn, con->window->id, con->window_rect);
-        DLOG("placing window %08x at %d %d\n", con->window->id, con->rect.x, con->rect.y);
-        xcb_reparent_window(conn, con->window->id, root,
-                            con->rect.x, con->rect.y);
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
+        if (con->window) {
+            DLOG("Re-adding X11 border of %d px\n", con->border_width);
+            con->window_rect.width += (2 * con->border_width);
+            con->window_rect.height += (2 * con->border_width);
+            xcb_set_window_rect(conn, con->window->id, con->window_rect);
+            DLOG("placing window %08x at %d %d\n", con->window->id, con->rect.x, con->rect.y);
+            xcb_reparent_window(conn, con->window->id, root,
+                                con->rect.x, con->rect.y);
+        }
     }
 
     /* Strictly speaking, this line doesn’t really belong here, but since we
@@ -536,7 +533,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
          * was not specified */
         bool automatic_border = (motif_border_style == BS_NORMAL);
 
-        floating_enable(nc, automatic_border);
+        if (floating_enable(nc, automatic_border)) {
+            nc->floating = FLOATING_AUTO_ON;
+        }
     }
 
     /* explicitly set the border width to the default */
