@@ -510,6 +510,8 @@ state BAR:
   'strip_workspace_numbers' -> BAR_STRIP_WORKSPACE_NUMBERS
   'strip_workspace_name' -> BAR_STRIP_WORKSPACE_NAME
   'verbose'                -> BAR_VERBOSE
+  'height'                 -> BAR_HEIGHT
+  'padding'                -> BAR_PADDING
   'colors'                 -> BAR_COLORS_BRACE
   '}'
       -> call cfg_bar_finish(); INITIAL
@@ -632,6 +634,44 @@ state BAR_STRIP_WORKSPACE_NAME:
 state BAR_VERBOSE:
   value = word
       -> call cfg_bar_verbose($value); BAR
+
+state BAR_HEIGHT:
+  value = number
+      -> call cfg_bar_height(&value); BAR
+
+state BAR_PADDING:
+  top_or_all = number
+      -> BAR_PADDING_TOP
+
+state BAR_PADDING_TOP:
+  'px'
+      ->
+  right_or_right_and_left = number
+      -> BAR_PADDING_RIGHT
+  end
+      -> call cfg_bar_padding_one(&top_or_all); BAR
+
+state BAR_PADDING_RIGHT:
+  'px'
+      ->
+  bottom = number
+      -> BAR_PADDING_BOTTOM
+  end
+      -> call cfg_bar_padding_two(&top_or_all, &right_or_right_and_left); BAR
+
+state BAR_PADDING_BOTTOM:
+  'px'
+      ->
+  left = number
+      -> BAR_PADDING_LEFT
+  end
+      -> call cfg_bar_padding_three(&top_or_all, &right_or_right_and_left, &bottom); BAR
+
+state BAR_PADDING_LEFT:
+  'px'
+      ->
+  end
+      -> call cfg_bar_padding_four(&top_or_all, &right_or_right_and_left, &bottom, &left); BAR
 
 state BAR_COLORS_BRACE:
   end
