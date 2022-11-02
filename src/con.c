@@ -1685,6 +1685,13 @@ Con *con_descend_direction(Con *con, direction_t direction) {
     return con_descend_direction(most, direction);
 }
 
+static bool has_outer_gaps(gaps_t gaps) {
+    return gaps.top > 0 ||
+           gaps.right > 0 ||
+           gaps.bottom > 0 ||
+           gaps.left > 0;
+}
+
 /*
  * Returns a "relative" Rect which contains the amount of pixels that need to
  * be added to the original Rect to get the final position (obviously the
@@ -1692,10 +1699,12 @@ Con *con_descend_direction(Con *con, direction_t direction) {
  *
  */
 Rect con_border_style_rect(Con *con) {
-    if (config.hide_edge_borders == HEBM_SMART && con_num_visible_children(con_get_workspace(con)) <= 1) {
-        if (!con_is_floating(con)) {
+    if ((config.smart_borders == SMART_BORDERS_ON && con_num_visible_children(con_get_workspace(con)) <= 1) ||
+        (config.smart_borders == SMART_BORDERS_NO_GAPS && !has_outer_gaps(calculate_effective_gaps(con))) ||
+        (config.hide_edge_borders == HEBM_SMART && con_num_visible_children(con_get_workspace(con)) <= 1) ||
+        (config.hide_edge_borders == HEBM_SMART_NO_GAPS && con_num_visible_children(con_get_workspace(con)) <= 1 && !has_outer_gaps(calculate_effective_gaps(con)))) {
+        if (!con_is_floating(con))
             return (Rect){0, 0, 0, 0};
-        }
     }
 
     adjacent_t borders_to_hide = ADJ_NONE;
@@ -1720,7 +1729,13 @@ Rect con_border_style_rect(Con *con) {
         result = (Rect){border_width, border_width, -(2 * border_width), -(2 * border_width)};
     }
 
-    borders_to_hide = con_adjacent_borders(con) & config.hide_edge_borders;
+    /* If hide_edge_borders is set to no_gaps and it did not pass the no border check, show all borders */
+    if (config.hide_edge_borders == HEBM_SMART_NO_GAPS) {
+        borders_to_hide = con_adjacent_borders(con) & HEBM_NONE;
+    } else {
+        borders_to_hide = con_adjacent_borders(con) & config.hide_edge_borders;
+    }
+
     if (borders_to_hide & ADJ_LEFT_SCREEN_EDGE) {
         result.x -= border_width;
         result.width += border_width;

@@ -49,6 +49,34 @@ void render_con(Con *con) {
     DLOG("Rendering node %p / %s / layout %d / children %d\n", con, con->name,
          con->layout, params.children);
 
+    if (gaps_should_inset_con(con, params.children)) {
+        gaps_t gaps = calculate_effective_gaps(con);
+        Rect inset = (Rect){
+            gaps_has_adjacent_container(con, D_LEFT) ? gaps.inner : gaps.left,
+            gaps_has_adjacent_container(con, D_UP) ? gaps.inner : gaps.top,
+            gaps_has_adjacent_container(con, D_RIGHT) ? -gaps.inner : -gaps.right,
+            gaps_has_adjacent_container(con, D_DOWN) ? -gaps.inner : -gaps.bottom};
+        inset.width -= inset.x;
+        inset.height -= inset.y;
+
+        inset.x = logical_px(inset.x);
+        inset.y = logical_px(inset.y);
+        inset.width = logical_px(inset.width);
+        inset.height = logical_px(inset.height);
+
+        if (con->fullscreen_mode == CF_NONE) {
+            params.rect = rect_add(params.rect, inset);
+            con->rect = rect_add(con->rect, inset);
+        }
+        inset.height = 0;
+        if (con->deco_rect.width != 0 && con->deco_rect.height != 0) {
+            con->deco_rect = rect_add(con->deco_rect, inset);
+        }
+
+        params.x = con->rect.x;
+        params.y = con->rect.y;
+    }
+
     int i = 0;
     con->mapped = true;
 
