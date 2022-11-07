@@ -49,20 +49,30 @@ void render_con(Con *con) {
     DLOG("Rendering node %p / %s / layout %d / children %d\n", con, con->name,
          con->layout, params.children);
 
+    if (con->type == CT_WORKSPACE) {
+        gaps_t gaps = calculate_effective_gaps(con);
+        Rect inset = (Rect){
+            gaps.left,
+            gaps.top,
+            -(gaps.left + gaps.right),
+            -(gaps.top + gaps.bottom),
+        };
+        con->rect = rect_add(con->rect, inset);
+        params.rect = rect_add(params.rect, inset);
+        params.x += gaps.left;
+        params.y += gaps.top;
+    }
+
     if (gaps_should_inset_con(con, params.children)) {
         gaps_t gaps = calculate_effective_gaps(con);
         Rect inset = (Rect){
-            gaps_has_adjacent_container(con, D_LEFT) ? gaps.inner : gaps.left,
-            gaps_has_adjacent_container(con, D_UP) ? gaps.inner : gaps.top,
-            gaps_has_adjacent_container(con, D_RIGHT) ? -gaps.inner : -gaps.right,
-            gaps_has_adjacent_container(con, D_DOWN) ? -gaps.inner : -gaps.bottom};
+            gaps_has_adjacent_container(con, D_LEFT) ? gaps.inner / 2 : gaps.inner,
+            gaps_has_adjacent_container(con, D_UP) ? gaps.inner / 2 : gaps.inner,
+            gaps_has_adjacent_container(con, D_RIGHT) ? -(gaps.inner / 2) : -gaps.inner,
+            gaps_has_adjacent_container(con, D_DOWN) ? -(gaps.inner / 2) : -gaps.inner,
+        };
         inset.width -= inset.x;
         inset.height -= inset.y;
-
-        inset.x = logical_px(inset.x);
-        inset.y = logical_px(inset.y);
-        inset.width = logical_px(inset.width);
-        inset.height = logical_px(inset.height);
 
         if (con->fullscreen_mode == CF_NONE) {
             params.rect = rect_add(params.rect, inset);
