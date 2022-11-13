@@ -618,7 +618,10 @@ bool con_is_docked(Con *con) {
  *
  */
 Con *con_inside_floating(Con *con) {
-    assert(con != NULL);
+    if (con == NULL) {
+        return NULL;
+    }
+
     if (con->type == CT_FLOATING_CON)
         return con;
 
@@ -1700,7 +1703,7 @@ static bool has_outer_gaps(gaps_t gaps) {
  */
 bool con_draw_decoration_into_frame(Con *con) {
     return con_is_leaf(con) &&
-           con->border_style == BS_NORMAL &&
+           con_border_style(con) == BS_NORMAL &&
            (con->parent == NULL ||
             (con->parent->layout != L_TABBED &&
              con->parent->layout != L_STACKED));
@@ -1817,14 +1820,19 @@ int con_border_style(Con *con) {
         return BS_NONE;
     }
 
-    if (con->parent->layout == L_STACKED)
-        return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+    if (con->parent != NULL) {
+        if (con->parent->layout == L_STACKED) {
+            return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+        }
 
-    if (con->parent->layout == L_TABBED && con->border_style != BS_NORMAL)
-        return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+        if (con->parent->layout == L_TABBED && con->border_style != BS_NORMAL) {
+            return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+        }
 
-    if (con->parent->type == CT_DOCKAREA)
-        return BS_NONE;
+        if (con->parent->type == CT_DOCKAREA) {
+            return BS_NONE;
+        }
+    }
 
     return con->border_style;
 }
@@ -2573,4 +2581,19 @@ void con_merge_into(Con *old, Con *new) {
     TAILQ_INIT(&(old->marks_head));
 
     tree_close_internal(old, DONT_KILL_WINDOW, false);
+}
+
+/*
+ * Returns true if the container is within any stacked/tabbed split container.
+ *
+ */
+bool con_inside_stacked_or_tabbed(Con *con) {
+    if (con->parent == NULL) {
+        return false;
+    }
+    if (con->parent->layout == L_STACKED ||
+        con->parent->layout == L_TABBED) {
+        return true;
+    }
+    return con_inside_stacked_or_tabbed(con->parent);
 }

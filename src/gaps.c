@@ -47,20 +47,32 @@ gaps_t calculate_effective_gaps(Con *con) {
  * Decides whether the container should be inset.
  */
 bool gaps_should_inset_con(Con *con, int children) {
+    /* No parent? None of the conditionals below can be true. */
+    if (con->parent == NULL) {
+        return false;
+    }
+
+    /* Floating split containers should never have gaps inside them. */
+    if (con_inside_floating(con)) {
+        return false;
+    }
+
+    const bool leaf_or_stacked_tabbed =
+        con_is_leaf(con) ||
+        (con->layout == L_STACKED || con->layout == L_TABBED);
+
     /* Inset direct children of the workspace that are leaf containers or
        stacked/tabbed containers. */
-    if (con->parent != NULL &&
-        con->parent->type == CT_WORKSPACE &&
-        (con_is_leaf(con) ||
-         (con->layout == L_STACKED || con->layout == L_TABBED))) {
+    if (leaf_or_stacked_tabbed &&
+        con->parent->type == CT_WORKSPACE) {
         return true;
     }
 
     /* Inset direct children of vertical or horizontal split containers at any
-       depth in the tree (only leaf containers, not split containers within
-       split containers, to avoid double insets). */
-    if (con_is_leaf(con) &&
-        con->parent != NULL &&
+       depth in the tree. Do not inset as soon as any parent is a stacked or
+       tabbed container, to avoid double insets. */
+    if (leaf_or_stacked_tabbed &&
+        !con_inside_stacked_or_tabbed(con) &&
         con->parent->type == CT_CON &&
         (con->parent->layout == L_SPLITH ||
          con->parent->layout == L_SPLITV)) {
@@ -97,4 +109,55 @@ bool gaps_has_adjacent_container(Con *con, direction_t direction) {
 
     /* For fullscreen containers, only consider the adjacent container if it is also fullscreen. */
     return con_has_parent(con, fullscreen) && con_has_parent(second, fullscreen);
+}
+
+/*
+ * Returns the configured gaps for this workspace based on the workspace name,
+ * number, and configured workspace gap assignments.
+ */
+gaps_t gaps_for_workspace(Con *ws) {
+    gaps_t gaps = (gaps_t){0, 0, 0, 0, 0};
+    struct Workspace_Assignment *assignment;
+    TAILQ_FOREACH (assignment, &ws_assignments, ws_assignments) {
+        if (strcmp(assignment->name, ws->name) == 0) {
+            gaps = assignment->gaps;
+            break;
+        } else if (ws->num != -1 && name_is_digits(assignment->name) && ws_name_to_number(assignment->name) == ws->num) {
+            gaps = assignment->gaps;
+        }
+    }
+
+    if (gaps.inner != 0) {
+        gaps.inner -= config.gaps.inner;
+    }
+    if (gaps.top != 0) {
+        gaps.top -= config.gaps.top;
+    }
+    if (gaps.right != 0) {
+        gaps.right -= config.gaps.right;
+    }
+    if (gaps.bottom != 0) {
+        gaps.bottom -= config.gaps.bottom;
+    }
+    if (gaps.left != 0) {
+        gaps.left -= config.gaps.left;
+    }
+
+    return gaps;
+}
+
+/*
+ * Re-applies all workspace gap assignments to existing workspaces after
+ * reloading the configuration file.
+ *
+ */
+void gaps_reapply_workspace_assignments(void) {
+    Con *output, *workspace = NULL;
+    TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
+        Con *content = output_get_content(output);
+        TAILQ_FOREACH (workspace, &(content->nodes_head), nodes) {
+            DLOG("updating gap assignments for workspace %s\n", workspace->name);
+            workspace->gaps = gaps_for_workspace(workspace);
+        }
+    }
 }
